@@ -5,6 +5,8 @@ import "./index.css";
 import { BrowserRouter } from "react-router-dom";
 import { initPostHog } from './analytics/posthog.ts';
 
+initPostHog()
+
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
