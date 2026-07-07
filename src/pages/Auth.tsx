@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
+import { trackEvent, identifyUser } from '@/utils/analytics';
+import { EVENTS } from '@/analytics/events';
 
 interface AuthProps {
   onAuthSuccess: () => void;
@@ -28,33 +30,76 @@ export default function Auth({ onAuthSuccess, initialMode = 'signin' }: AuthProp
 
     if (mode === 'signup') {
       // Validation
-      if (!form.fullName.trim()) return setError('Full name is required.');
-      if (!form.businessName.trim()) return setError('Business name is required.');
-      if (!form.email.trim()) return setError('Email is required.');
-      if (form.password.length < 6) return setError('Password must be at least 6 characters.');
+      if (!form.fullName.trim()) {
+        trackEvent(EVENTS.AUTH_FAILED, {
+          mode: 'signup',
+          reason: 'missing_full_name',
+        });
+        return setError('Full name is required.');
+      }
+
+      if (!form.businessName.trim()) {
+        trackEvent(EVENTS.AUTH_FAILED, {
+          mode: 'signup',
+          reason: 'missing_business_name',
+        });
+        return setError('Business name is required.');
+      }
+
+      if (!form.email.trim()) {
+        trackEvent(EVENTS.AUTH_FAILED, {
+          mode: 'signup',
+          reason: 'missing_email',
+        });
+        return setError('Email is required.');
+      }
+
+      if (form.password.length < 6) {
+        trackEvent(EVENTS.AUTH_FAILED, {
+          mode: 'signup',
+          reason: 'password_too_short',
+        });
+        return setError('Password must be at least 6 characters.');
+      }
 
       // Check if email already exists
       const existing = localStorage.getItem('invoicepro_user');
       if (existing) {
         const user = JSON.parse(existing);
-        if (user.email === form.email) return setError('An account with this email already exists.');
+        if (user.email === form.email) {
+          trackEvent(EVENTS.AUTH_FAILED, {
+            mode: 'signup',
+            reason: 'email_already_exists',
+            email: form.email,
+          });
+          return setError('An account with this email already exists.');
+        }
       }
 
+      const userId = crypto.randomUUID();
+
       // Save user
-      localStorage.setItem('invoicepro_user', JSON.stringify({
-        fullName: form.fullName,
-        businessName: form.businessName,
-        email: form.email,
-        password: form.password,
-      }));
+      localStorage.setItem(
+        'invoicepro_user',
+        JSON.stringify({
+          id: userId,
+          fullName: form.fullName,
+          businessName: form.businessName,
+          email: form.email,
+          password: form.password,
+        })
+      );
 
       // Pre-fill business info
-      localStorage.setItem('invoicepro_business', JSON.stringify({
-        name: form.businessName,
-        address: '',
-        phone: '',
-        email: form.email,
-      }));
+      localStorage.setItem(
+        'invoicepro_business',
+        JSON.stringify({
+          name: form.businessName,
+          address: '',
+          phone: '',
+          email: form.email,
+        })
+      );
 
       // Send to Formspree
       await fetch('https://formspree.io/f/meepdlzy', {
@@ -67,44 +112,100 @@ export default function Auth({ onAuthSuccess, initialMode = 'signin' }: AuthProp
         }),
       });
 
+      // Start session
       localStorage.setItem('invoicepro_session', 'true');
-      onAuthSuccess();
 
+      // Identify user in analytics
+      identifyUser(userId, {
+        email: form.email,
+        full_name: form.fullName,
+        business_name: form.businessName,
+        auth_method: 'local_storage',
+      });
+
+      // Track successful signup
+      trackEvent(EVENTS.SIGNUP_COMPLETED, {
+        user_id: userId,
+        email: form.email,
+        business_name: form.businessName,
+        auth_method: 'local_storage',
+      });
+
+      onAuthSuccess();
     } else {
       // Sign in
-      if (!form.email.trim() || !form.password.trim()) return setError('Email and password are required.');
+      if (!form.email.trim() || !form.password.trim()) {
+        trackEvent(EVENTS.AUTH_FAILED, {
+          mode: 'signin',
+          reason: 'missing_email_or_password',
+        });
+        return setError('Email and password are required.');
+      }
 
       const existing = localStorage.getItem('invoicepro_user');
-      if (!existing) return setError('No account found. Please sign up first.');
+      if (!existing) {
+        trackEvent(EVENTS.AUTH_FAILED, {
+          mode: 'signin',
+          reason: 'no_account_found',
+          email: form.email,
+        });
+        return setError('No account found. Please sign up first.');
+      }
 
       const user = JSON.parse(existing);
       if (user.email !== form.email || user.password !== form.password) {
+        trackEvent(EVENTS.AUTH_FAILED, {
+          mode: 'signin',
+          reason: 'invalid_credentials',
+          email: form.email,
+        });
         return setError('Incorrect email or password.');
       }
 
       localStorage.setItem('invoicepro_session', 'true');
+
+      // Identify existing user in analytics
+      identifyUser(user.id || user.email, {
+        email: user.email,
+        full_name: user.fullName,
+        business_name: user.businessName,
+        auth_method: 'local_storage',
+      });
+
+      // Track successful sign in
+      trackEvent(EVENTS.SIGNIN_COMPLETED, {
+        user_id: user.id || user.email,
+        email: user.email,
+        auth_method: 'local_storage',
+      });
+
       onAuthSuccess();
     }
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
-
-      {/* Card */}
       <div className="flex-1 flex items-center justify-center px-4 py-12">
         <div className="bg-white border rounded-2xl shadow-sm w-full max-w-md p-8">
-
           {/* Toggle tabs */}
           <div className="flex rounded-xl border overflow-hidden mb-8">
             <button
               onClick={() => { setMode('signin'); setError(''); }}
-              className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${mode === 'signin' ? 'bg-emerald-500 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+              className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
+                mode === 'signin'
+                  ? 'bg-emerald-500 text-white'
+                  : 'text-slate-500 hover:bg-slate-50'
+              }`}
             >
               Sign In
             </button>
             <button
               onClick={() => { setMode('signup'); setError(''); }}
-              className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${mode === 'signup' ? 'bg-emerald-500 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+              className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${
+                mode === 'signup'
+                  ? 'bg-emerald-500 text-white'
+                  : 'text-slate-500 hover:bg-slate-50'
+              }`}
             >
               Sign Up
             </button>
@@ -114,7 +215,9 @@ export default function Auth({ onAuthSuccess, initialMode = 'signin' }: AuthProp
             {mode === 'signin' ? 'Welcome back' : 'Create your account'}
           </h2>
           <p className="text-slate-500 text-sm mb-6">
-            {mode === 'signin' ? 'Sign in to access your dashboard.' : 'Get started for free today.'}
+            {mode === 'signin'
+              ? 'Sign in to access your dashboard.'
+              : 'Get started for free today.'}
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -179,7 +282,9 @@ export default function Auth({ onAuthSuccess, initialMode = 'signin' }: AuthProp
             </div>
 
             {error && (
-              <p className="text-red-500 text-sm bg-red-50 border border-red-200 px-4 py-2 rounded-lg">{error}</p>
+              <p className="text-red-500 text-sm bg-red-50 border border-red-200 px-4 py-2 rounded-lg">
+                {error}
+              </p>
             )}
 
             <button
@@ -193,13 +298,15 @@ export default function Auth({ onAuthSuccess, initialMode = 'signin' }: AuthProp
           <p className="text-center text-sm text-slate-500 mt-6">
             {mode === 'signin' ? "Don't have an account?" : 'Already have an account?'}{' '}
             <button
-              onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); }}
+              onClick={() => {
+                setMode(mode === 'signin' ? 'signup' : 'signin');
+                setError('');
+              }}
               className="text-emerald-600 font-semibold hover:underline"
             >
               {mode === 'signin' ? 'Sign Up' : 'Sign In'}
             </button>
           </p>
-
         </div>
       </div>
     </div>

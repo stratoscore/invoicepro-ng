@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { ArrowLeft, Plus, Trash2, Save, UserPlus, CalendarDays } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import type { Invoice, InvoiceItem, Customer, BusinessInfo } from '@/types';
 import { toast } from 'sonner';
+import { trackEvent } from '@/utils/analytics';
+import { EVENTS } from '@/analytics/events';
 
 declare global {
   interface Window {
@@ -52,6 +54,19 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
   const [newCustomerAddress, setNewCustomerAddress] = useState('');
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false);
 
+  // Track invoice form start only once per visit to this page
+  const hasTrackedFormStart = useRef(false);
+
+  const trackFormStart = () => {
+    if (hasTrackedFormStart.current) return;
+
+    hasTrackedFormStart.current = true;
+
+    trackEvent(EVENTS.INVOICE_FORM_STARTED, {
+      source: 'create_invoice_page',
+    });
+  };
+
   const selectedCustomer = useMemo(
     () => customers.find(c => c.id === selectedCustomerId),
     [customers, selectedCustomerId]
@@ -67,6 +82,8 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
   };
 
   const handleTermChange = (value: string) => {
+    trackFormStart();
+
     setSelectedTerm(value);
     if (value === '-1') {
       setShowCustomDate(true);
@@ -79,7 +96,12 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
   };
 
   const handleAddItem = () => {
-    setItems(prev => [...prev, { id: crypto.randomUUID(), description: '', quantity: 1, unitPrice: 0, total: 0 }]);
+    trackFormStart();
+
+    setItems(prev => [
+      ...prev,
+      { id: crypto.randomUUID(), description: '', quantity: 1, unitPrice: 0, total: 0 },
+    ]);
   };
 
   const handleRemoveItem = (id: string) => {
@@ -87,6 +109,8 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
   };
 
   const handleItemChange = (id: string, field: keyof InvoiceItem, value: string | number) => {
+    trackFormStart();
+
     setItems(prev =>
       prev.map(item => {
         if (item.id !== id) return item;
@@ -102,6 +126,7 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
       toast.error('Customer name is required');
       return;
     }
+
     const newCustomer: Customer = {
       id: crypto.randomUUID(),
       name: newCustomerName,
@@ -110,7 +135,17 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
       address: newCustomerAddress,
       createdAt: new Date().toISOString(),
     };
+
     onAddCustomer(newCustomer);
+
+    trackEvent(EVENTS.CLIENT_CREATED, {
+      customer_id: newCustomer.id,
+      has_phone: Boolean(newCustomer.phone?.trim()),
+      has_email: Boolean(newCustomer.email?.trim()),
+      has_address: Boolean(newCustomer.address?.trim()),
+      source: 'create_invoice_modal',
+    });
+
     setSelectedCustomerId(newCustomer.id);
     setIsAddCustomerOpen(false);
     setNewCustomerName('');
@@ -122,12 +157,21 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
 
   const handleSave = () => {
     if (!selectedCustomer) {
+      trackEvent(EVENTS.INVOICE_CREATION_FAILED, {
+        reason: 'missing_customer',
+      });
+
       toast.error('Please select a customer');
       return;
     }
 
     const validItems = items.filter(item => item.description.trim() && item.quantity > 0);
+
     if (validItems.length === 0) {
+      trackEvent(EVENTS.INVOICE_CREATION_FAILED, {
+        reason: 'no_valid_items',
+      });
+
       toast.error('Please add at least one valid item');
       return;
     }
@@ -156,12 +200,39 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
       createdAt: new Date().toISOString(),
     };
 
-    onSave(invoice);
+    try {
+      onSave(invoice);
 
-    if (window.gtag) window.gtag('event', 'invoice_created', { value: total, currency: 'NGN' });
+      // PostHog event
+      trackEvent(EVENTS.INVOICE_CREATED, {
+        invoice_id: invoice.id,
+        invoice_number: invoice.invoiceNumber,
+        customer_id: invoice.customerId,
+        items_count: invoice.items.length,
+        amount: invoice.total,
+        currency: 'NGN',
+        status: invoice.status,
+        payment_terms: invoice.paymentTerms,
+      });
 
-    toast.success('Invoice created successfully!');
-    onCancel();
+      // Keep GA event too
+      if (window.gtag) {
+        window.gtag('event', 'invoice_created', {
+          value: total,
+          currency: 'NGN',
+        });
+      }
+
+      toast.success('Invoice created successfully!');
+      onCancel();
+    } catch (error) {
+      trackEvent(EVENTS.INVOICE_CREATION_FAILED, {
+        reason: 'save_error',
+        message: error instanceof Error ? error.message : 'unknown_error',
+      });
+
+      toast.error('Failed to create invoice');
+    }
   };
 
   const formatCurrency = (amount: number) =>
@@ -188,7 +259,13 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1">
               <Label className="mb-1 block text-sm text-gray-600">Select an existing customer</Label>
-              <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
+              <Select
+                value={selectedCustomerId}
+                onValueChange={(value) => {
+                  trackFormStart();
+                  setSelectedCustomerId(value);
+                }}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Choose customer..." />
                 </SelectTrigger>
@@ -213,19 +290,35 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
                   <div className="space-y-3 mt-2">
                     <div>
                       <Label className="mb-1 block">Full Name *</Label>
-                      <Input placeholder="e.g. John Doe" value={newCustomerName} onChange={e => setNewCustomerName(e.target.value)} />
+                      <Input
+                        placeholder="e.g. John Doe"
+                        value={newCustomerName}
+                        onChange={e => setNewCustomerName(e.target.value)}
+                      />
                     </div>
                     <div>
                       <Label className="mb-1 block">Phone Number</Label>
-                      <Input placeholder="e.g. 08012345678" value={newCustomerPhone} onChange={e => setNewCustomerPhone(e.target.value)} />
+                      <Input
+                        placeholder="e.g. 08012345678"
+                        value={newCustomerPhone}
+                        onChange={e => setNewCustomerPhone(e.target.value)}
+                      />
                     </div>
                     <div>
                       <Label className="mb-1 block">Email Address</Label>
-                      <Input placeholder="e.g. john@email.com" value={newCustomerEmail} onChange={e => setNewCustomerEmail(e.target.value)} />
+                      <Input
+                        placeholder="e.g. john@email.com"
+                        value={newCustomerEmail}
+                        onChange={e => setNewCustomerEmail(e.target.value)}
+                      />
                     </div>
                     <div>
                       <Label className="mb-1 block">Address</Label>
-                      <Textarea placeholder="e.g. 12 Lagos Street, Abuja" value={newCustomerAddress} onChange={e => setNewCustomerAddress(e.target.value)} />
+                      <Textarea
+                        placeholder="e.g. 12 Lagos Street, Abuja"
+                        value={newCustomerAddress}
+                        onChange={e => setNewCustomerAddress(e.target.value)}
+                      />
                     </div>
                     <Button onClick={handleAddCustomer} className="w-full mt-2 bg-emerald-500 hover:bg-emerald-600 text-white">
                       Save Customer
@@ -352,7 +445,10 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
                   type="date"
                   value={dueDate}
                   min={new Date().toISOString().split('T')[0]}
-                  onChange={e => setDueDate(e.target.value)}
+                  onChange={e => {
+                    trackFormStart();
+                    setDueDate(e.target.value);
+                  }}
                 />
               </div>
             )}
@@ -374,7 +470,10 @@ export function CreateInvoice({ customers, onSave, onAddCustomer, onCancel }: Cr
           <Textarea
             placeholder="e.g. Please transfer payment to GTBank 0123456789 (My Business Ltd). Thank you for your business!"
             value={notes}
-            onChange={e => setNotes(e.target.value)}
+            onChange={e => {
+              trackFormStart();
+              setNotes(e.target.value);
+            }}
             rows={3}
           />
         </CardContent>

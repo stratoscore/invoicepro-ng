@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Building2, Save, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type { BusinessInfo } from '@/types';
 import { toast } from 'sonner';
+import { trackEvent } from '@/utils/analytics';
+import { EVENTS } from '@/analytics/events';
 
 interface SettingsProps {
   businessInfo: BusinessInfo;
@@ -19,17 +21,41 @@ export function Settings({ businessInfo, onUpdate }: SettingsProps) {
   const [phone, setPhone] = useState(businessInfo.phone);
   const [email, setEmail] = useState(businessInfo.email);
 
+  useEffect(() => {
+  trackEvent(EVENTS.SETTINGS_PAGE_VIEWED, {
+    has_business_name: !!businessInfo.name,
+    has_address: !!businessInfo.address,
+    has_phone: !!businessInfo.phone,
+    has_email: !!businessInfo.email,
+  });
+}, );
+
   const handleSave = () => {
     if (!name.trim()) {
       toast.error('Business name is required');
       return;
     }
 
-    onUpdate({
+    const updatedInfo = {
       name: name.trim(),
       address: address.trim(),
       phone: phone.trim(),
       email: email.trim(),
+    };
+
+    onUpdate(updatedInfo);
+
+    trackEvent(EVENTS.BUSINESS_PROFILE_UPDATED, {
+      has_name: !!updatedInfo.name,
+      has_address: !!updatedInfo.address,
+      has_phone: !!updatedInfo.phone,
+      has_email: !!updatedInfo.email,
+      changed_fields: [
+        name !== businessInfo.name ? 'name' : null,
+        address !== businessInfo.address ? 'address' : null,
+        phone !== businessInfo.phone ? 'phone' : null,
+        email !== businessInfo.email ? 'email' : null,
+      ].filter(Boolean),
     });
 
     toast.success('Business information updated');
@@ -40,6 +66,10 @@ export function Settings({ businessInfo, onUpdate }: SettingsProps) {
     setAddress(businessInfo.address);
     setPhone(businessInfo.phone);
     setEmail(businessInfo.email);
+
+    trackEvent(EVENTS.SETTINGS_CANCEL_CLICKED, {
+      had_unsaved_changes: true,
+    });
   };
 
   const hasChanges = 

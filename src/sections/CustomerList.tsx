@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Search, UserPlus, Phone, Mail, MapPin, Edit2, Trash2, FileText, X, Save } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { Customer, Invoice } from '@/types';
 import { toast } from 'sonner';
+import { trackEvent } from '@/utils/analytics';
+import { EVENTS } from '@/analytics/events';
 
 interface CustomerListProps {
   customers: Customer[];
@@ -26,6 +28,13 @@ export function CustomerList({ customers, invoices, onAdd, onUpdate, onDelete }:
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
+
+  useEffect(() => {
+    trackEvent(EVENTS.CLIENTS_PAGE_VIEWED, {
+      customers_count: customers.length,
+      invoices_count: invoices.length,
+    });
+  }, [customers.length, invoices.length]);
 
   const filteredCustomers = useMemo(() => {
     return customers.filter(customer => 
@@ -56,6 +65,11 @@ export function CustomerList({ customers, invoices, onAdd, onUpdate, onDelete }:
   const handleOpenAdd = () => {
     resetForm();
     setIsAddOpen(true);
+
+    trackEvent(EVENTS.CLIENT_FORM_OPENED, {
+      mode: 'create',
+      source: 'customers_page',
+    });
   };
 
   const handleOpenEdit = (customer: Customer) => {
@@ -65,6 +79,14 @@ export function CustomerList({ customers, invoices, onAdd, onUpdate, onDelete }:
     setEmail(customer.email);
     setAddress(customer.address);
     setIsAddOpen(true);
+
+    trackEvent(EVENTS.CLIENT_FORM_OPENED, {
+      mode: 'edit',
+      source: 'customer_row',
+      customer_id: customer.id,
+      has_email: !!customer.email,
+      has_phone: !!customer.phone,
+    });
   };
 
   const handleSave = () => {
@@ -81,7 +103,17 @@ export function CustomerList({ customers, invoices, onAdd, onUpdate, onDelete }:
         email: email.trim(),
         address: address.trim(),
       };
+
       onUpdate(updated);
+
+      trackEvent(EVENTS.CLIENT_UPDATED, {
+        customer_id: updated.id,
+        has_email: !!updated.email,
+        has_phone: !!updated.phone,
+        has_address: !!updated.address,
+        invoice_count: getCustomerInvoiceCount(updated.id),
+      });
+
       toast.success('Customer updated successfully');
     } else {
       const newCustomer: Customer = {
@@ -92,7 +124,17 @@ export function CustomerList({ customers, invoices, onAdd, onUpdate, onDelete }:
         address: address.trim(),
         createdAt: new Date().toISOString(),
       };
+
       onAdd(newCustomer);
+
+      trackEvent(EVENTS.CLIENT_CREATED, {
+        customer_id: newCustomer.id,
+        has_email: !!newCustomer.email,
+        has_phone: !!newCustomer.phone,
+        has_address: !!newCustomer.address,
+        source: 'customers_page',
+      });
+
       toast.success('Customer added successfully');
     }
 
@@ -102,6 +144,7 @@ export function CustomerList({ customers, invoices, onAdd, onUpdate, onDelete }:
 
   const handleDelete = (customer: Customer) => {
     const invoiceCount = getCustomerInvoiceCount(customer.id);
+
     if (invoiceCount > 0) {
       if (!confirm(`This customer has ${invoiceCount} invoice(s). Are you sure you want to delete them?`)) {
         return;
@@ -111,7 +154,17 @@ export function CustomerList({ customers, invoices, onAdd, onUpdate, onDelete }:
         return;
       }
     }
+
     onDelete(customer.id);
+
+    trackEvent(EVENTS.CLIENT_DELETED, {
+      customer_id: customer.id,
+      invoice_count: invoiceCount,
+      total_paid_revenue: getCustomerTotalRevenue(customer.id),
+      had_email: !!customer.email,
+      had_phone: !!customer.phone,
+    });
+
     toast.success('Customer deleted');
   };
 
@@ -143,7 +196,13 @@ export function CustomerList({ customers, invoices, onAdd, onUpdate, onDelete }:
         <Input
           placeholder="Search customers..."
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={(e) => {
+            setSearchQuery(e.target.value);
+
+            trackEvent(EVENTS.CLIENT_SEARCH_USED, {
+              query_length: e.target.value.length,
+            });
+          }}
           className="pl-9"
         />
       </div>
@@ -284,7 +343,14 @@ export function CustomerList({ customers, invoices, onAdd, onUpdate, onDelete }:
               />
             </div>
             <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setIsAddOpen(false)} className="flex-1">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsAddOpen(false);
+                  resetForm();
+                }}
+                className="flex-1"
+              >
                 <X className="w-4 h-4 mr-2" />
                 Cancel
               </Button>

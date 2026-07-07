@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-
 import type { Invoice, Customer, BusinessInfo, View } from "@/types";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { useState } from "react";
+import { usePageTracking } from '@/hooks/usePageTracking';
 
 import Home from "@/pages/Home";
 import Auth from "@/pages/Auth";
@@ -21,9 +22,15 @@ import { Header } from "@/components/Header";
 import { Toaster } from "@/components/ui/sonner";
 import { usePWAInstall } from "@/hooks/usePWAInstall";
 
+import { trackEvent } from '@/utils/analytics';
+import { EVENTS } from '@/analytics/events';
+
 function App() {
+  usePageTracking();
+
   const navigate = useNavigate();
   const location = useLocation();
+
   const publicPaths = ["/", "/auth", "/about", "/contact", "/feedback"];
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('all');
 
@@ -37,7 +44,6 @@ function App() {
   });
 
   const isLoggedIn = !!localStorage.getItem("invoicepro_session");
-
   const { isInstallable, installApp } = usePWAInstall();
 
   // ================= ACTIONS =================
@@ -74,31 +80,87 @@ function App() {
   };
 
   const handleLogout = () => {
+    trackEvent(EVENTS.USER_LOGGED_OUT, {
+      current_path: location.pathname,
+      invoices_count: invoices.length,
+      customers_count: customers.length,
+    });
+
     localStorage.removeItem("invoicepro_session");
     navigate("/");
+  };
+
+  const handleBottomNavNavigate = (view: View) => {
+    trackEvent(EVENTS.BOTTOM_NAV_CLICKED, {
+      from: location.pathname.replace('/', '') || 'dashboard',
+      to: view,
+    });
+
+    navigate(`/${view}`);
+  };
+
+  const handleInstallApp = () => {
+    trackEvent(EVENTS.PWA_INSTALL_CLICKED, {
+      current_path: location.pathname,
+    });
+
+    installApp();
   };
 
   // ================= UI =================
   return (
     <div className="min-h-screen bg-gray-50 relative">
-      
       {/* Header */}
       {isLoggedIn && !publicPaths.includes(location.pathname) && (
         <Header
           businessName={businessInfo.name}
-          onSettings={() => navigate("/settings")}
+          onSettings={() => {
+            trackEvent(EVENTS.SETTINGS_OPENED_FROM_HEADER, {
+              from: location.pathname,
+            });
+            navigate("/settings");
+          }}
           onLogout={handleLogout}
-          onUpgrade={() => navigate('/upgrade')}
+          onUpgrade={() => {
+            trackEvent(EVENTS.UPGRADE_OPENED, {
+              from: location.pathname,
+            });
+            navigate('/upgrade');
+          }}
         />
       )}
 
       <main className="pb-20 md:pb-0">
         <Routes>
-
           {/* Public */}
-          <Route path="/" element={<Home onGetStarted={() => navigate("/auth?mode=signup")} onLogin={() => navigate("/auth")} onAbout={() => navigate("/about")} onContact={() => navigate("/contact")} onFeedback={() => navigate("/feedback")} />} />
-          <Route path="/auth" element={<Auth onAuthSuccess={() => navigate("/dashboard")} onBack={() => navigate("/")} />} />
-          <Route path="/about" element={<About onGetStarted={() => navigate("/auth")} />} />
+          <Route
+            path="/"
+            element={
+              <Home
+                onGetStarted={() => navigate("/auth?mode=signup")}
+                onLogin={() => navigate("/auth")}
+                onAbout={() => navigate("/about")}
+                onContact={() => navigate("/contact")}
+                onFeedback={() => navigate("/feedback")}
+              />
+            }
+          />
+
+          <Route
+            path="/auth"
+            element={
+              <Auth
+                onAuthSuccess={() => navigate("/dashboard")}
+                onBack={() => navigate("/")}
+              />
+            }
+          />
+
+          <Route
+            path="/about"
+            element={<About onGetStarted={() => navigate("/auth")} />}
+          />
+
           <Route path="/contact" element={<Contact />} />
           <Route path="/feedback" element={<Feedback />} />
 
@@ -107,16 +169,16 @@ function App() {
             path="/dashboard"
             element={
               isLoggedIn ? (
-                 <Dashboard
-                    invoices={invoices}
-                    onCreateInvoice={() => navigate('/create-invoice')}
-                    onViewInvoices={() => navigate('/invoices')}
-                    onViewCustomers={() => navigate('/customers')}
-                    onViewInvoicesByStatus={(status) => {
-                      setInvoiceStatusFilter(status);
-                      navigate('/invoices');
-                    }}
-                  />
+                <Dashboard
+                  invoices={invoices}
+                  onCreateInvoice={() => navigate('/create-invoice')}
+                  onViewInvoices={() => navigate('/invoices')}
+                  onViewCustomers={() => navigate('/customers')}
+                  onViewInvoicesByStatus={(status) => {
+                    setInvoiceStatusFilter(status);
+                    navigate('/invoices');
+                  }}
+                />
               ) : (
                 <Navigate to="/" />
               )
@@ -129,7 +191,6 @@ function App() {
               isLoggedIn ? (
                 <InvoiceList
                   invoices={invoices}
-                  customers={customers}
                   businessInfo={businessInfo}
                   onMarkAsPaid={markAsPaid}
                   onDelete={deleteInvoice}
@@ -193,30 +254,34 @@ function App() {
             }
           />
 
-        <Route
-          path="/upgrade"
-          element={
-            isLoggedIn ? (
-              <Upgrade
-                onBack={() => navigate('/dashboard')}
-                onProceedToPayment={(plan) => {
-                  console.log('Proceeding to payment:', plan);
-                }}
-              />
-            ) : (
-              <Navigate to="/" />
-            )
-          }
-        />
-        </Routes>
+          <Route
+            path="/upgrade"
+            element={
+              isLoggedIn ? (
+                <Upgrade
+                  onBack={() => navigate('/dashboard')}
+                  onProceedToPayment={(plan) => {
+                    trackEvent(EVENTS.UPGRADE_PAYMENT_STARTED, {
+                      plan,
+                      from: location.pathname,
+                    });
 
+                    console.log('Proceeding to payment:', plan);
+                  }}
+                />
+              ) : (
+                <Navigate to="/" />
+              )
+            }
+          />
+        </Routes>
       </main>
 
       {/* Install Button */}
       {isInstallable && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50">
           <button
-            onClick={installApp}
+            onClick={handleInstallApp}
             className="px-4 py-2 bg-green-600 text-white rounded-md shadow-md hover:bg-green-700 transition font-bold text-sm"
           >
             Install InvoicePro NG
@@ -227,8 +292,8 @@ function App() {
       {/* Bottom Nav */}
       {isLoggedIn && !publicPaths.includes(location.pathname) && (
         <BottomNav
-          currentView={location.pathname.replace('/', '') as View || 'dashboard'}
-          onNavigate={(view) => navigate(`/${view}`)}
+          currentView={(location.pathname.replace('/', '') as View) || 'dashboard'}
+          onNavigate={handleBottomNavNavigate}
         />
       )}
 

@@ -2,6 +2,8 @@ import { Home, FileText, Users, PlusCircle } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import type { View } from '@/types';
 import { cn } from '@/lib/utils';
+import { trackEvent } from '@/utils/analytics';
+import { EVENTS } from '@/analytics/events';
 
 interface BottomNavProps {
   currentView: View;
@@ -23,13 +25,10 @@ export function BottomNav({ currentView, onNavigate }: BottomNavProps) {
       const currentScrollY = window.scrollY;
 
       if (currentScrollY < 10) {
-        // Always show when near top
         setVisible(true);
       } else if (currentScrollY > lastScrollY.current) {
-        // Scrolling down → hide
         setVisible(false);
       } else {
-        // Scrolling up → show
         setVisible(true);
       }
 
@@ -65,8 +64,16 @@ export function BottomNav({ currentView, onNavigate }: BottomNavProps) {
             </button>
           );
         })}
+
         <button
-          onClick={() => onNavigate('create-invoice')}
+          onClick={() => {
+            trackEvent(EVENTS.CREATE_INVOICE_CLICKED, {
+              source: 'bottom_nav',
+              from_view: currentView,
+            });
+
+            onNavigate('create-invoice');
+          }}
           className="flex flex-col items-center justify-center gap-1 flex-1 h-full text-emerald-600"
         >
           <div className="w-10 h-10 bg-emerald-600 rounded-full flex items-center justify-center -mt-4 shadow-lg">
