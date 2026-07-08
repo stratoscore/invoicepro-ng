@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
+    "@posthog/react": "^1.10.3",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-aspect-ratio": "^1.1.8",
@@ -47,7 +48,7 @@
     "jspdf": "^4.2.0",
     "lucide-react": "^0.562.0",
     "next-themes": "^0.4.6",
-    "posthog-js": "^1.398.0",
+    "posthog-js": "^1.398.2",
     "react": "^19.2.0",
     "react-day-picker": "^9.13.0",
     "react-dom": "^19.2.0",
